@@ -1,7 +1,7 @@
 " File: funprototypes.vim
 " Author: wuhong400@gmail.com
 " Last Change:20 Feb 2011
-" Version:1.0 
+" Version:1.1 
 " Introdution:
 "   This script is only for C language. You just press the key which you mapped
 "   can automatic insert/replace the all funtions' prototypes before the first funtion.
@@ -73,6 +73,23 @@
 "     Email: wuhong400@gmail.com
 "     GTalk: wuhong400@gmail.com
 "       MSN: wuhong40@tom.com
+" Log:
+"
+" 1.1 fix bug:
+"     1. The macro definitiona is in comment will generate bug.
+"     like:
+"     /*
+"     #ifdef MAX 22
+"     */
+"     2. Above the function definition exist cpp style comment will generate
+"     bug.
+"     like:
+"     //hello 
+"     int foo(){}
+"     
+"     Then script will generate:
+"     //hello int foo();
+" 1.0 publish funprototypes.vim
               
 if !exists("g:fun_prototypes_skip_fun_list")
     let g:fun_prototypes_skip_fun_list=["main"]
@@ -106,6 +123,7 @@ let s:static_fun_cnt = 0
 let s:other_fun_cnt = 0
 let s:skip_fun_cnt = 0
 let s:first_fun_line=0
+let s:first_fun_head_end_line = 0
 let s:dbg_str=""
 let s:is_prototypes_head_exist = 0
 let s:insert_line = 0
@@ -218,30 +236,36 @@ function! FunProtoGetList()
                         endif
                     endwhile
 
-                    "remove the comment 
-                    "let line_content = FunProtoRemoveComment(line_content)
-                    if line_content =~ "[\t ]*#.*" || fun_head_start_line < pre_fun_end_pos[0]
-                        let fun_head_start_line = fun_head_start_line + long_line_cnt
-                        break
-                    elseif line_content =~ ".*[;}].*"
+                    "if 0 == match(line_content,  "[\t ]*#.*") || fun_head_start_line < pre_fun_end_pos[0]
+                    "    let fun_head_start_line = fun_head_start_line + long_line_cnt
+                    "    break
+                    if line_content =~ ".*[;}#].*"
                         "code: fun_1();}/* ; */ int /* } */ fun_2(){ int i;
                         "may be some funtion info after the ';'&'}'
                         let i=0
                         let funhead_end_col = -1
                         let b_is_funhead_end = 0
+                        let b_is_macro_define = 0
                         let line_len = strlen(line_content)
                         while i < line_len
                             let i_pos=[fun_head_start_line, i+1]
 
+                            "we search over the '{'
                             if FunProtoComparePos(i_pos, fun_body_start_pos) >=0
                                 break
                             endif
 
-                            if line_content[i] == ";" || line_content[i] == "}"
+                            if line_content[i] == ";" || line_content[i] == "}" || line_content[i] == "#"
                                 if FunProtoIsInComment(i_pos) == 0
                                     if FunProtoComparePos(i_pos, fun_body_start_pos) < 0
                                         let funhead_end_col = i
                                         let b_is_funhead_end = 1
+
+                                        "it's a macro define 
+                                        if line_content[i] == "#"
+                                            let b_is_macro_define = 1
+                                            break
+                                        endif
                                     endif
                                 endif
                             endi
@@ -250,18 +274,25 @@ function! FunProtoGetList()
                         
                         
                         let temp_info = strpart(line_content, funhead_end_col+1) 
-                        let fun_head =FunProtoRemoveComment(temp_info) ."\n". fun_head
+                        let temp_info = FunProtoRemoveComment(temp_info)
+                        let temp_info = FunProtoTrim(temp_info)
                         if b_is_funhead_end == 1
                             "There is no info in this line and search
-                            "finished, the pointer go back
-                            if temp_info == ""
+                            "finished or this line is macro define, the pointer go back
+                            if b_is_macro_define == 1 || temp_info == ""
                                 let fun_head_start_line = fun_head_start_line + long_line_cnt
+                            else "there is some info after ; } 
+                                let fun_head =temp_info."\n". fun_head
+                                let fun_head_start_line = fun_head_start_line - long_line_cnt + 1
                             endif
                             break
                         else
+                            let fun_head =temp_info."\n". fun_head
                             let fun_head_start_line = fun_head_start_line - long_line_cnt
                         endif
                     else
+                        "remove the comment 
+                        let line_content = FunProtoRemoveComment(line_content)
                         "not over , search go on
                         let fun_head = line_content . "\n" . fun_head
                         let fun_head_start_line = fun_head_start_line - long_line_cnt
@@ -287,6 +318,7 @@ function! FunProtoGetList()
                     " before that position
                     if 1 == is_first_fun 
                         let s:first_fun_line = fun_head_start_line
+                        let s:first_fun_head_end_line = fun_body_start_pos[0]
                         let is_first_fun = 0
                     endif
                     "let s:dbg_str = s:dbg_str."".fun_head_start_line
@@ -407,7 +439,7 @@ function! FunProtoGetInsertLine()
     endif
 
     "let s:dbg_str=s:dbg_str."cnt:".prototypes_line_cnt
-    while prototypes_line_cnt > 0 && curr_line <= s:first_fun_line + prototypes_line_cnt 
+    while prototypes_line_cnt > 0 && curr_line <= s:first_fun_head_end_line + prototypes_line_cnt 
         let exist_prototypes = 1
 
         if g:fun_prototypes_header != "" 
@@ -446,23 +478,31 @@ function! FunProtoGetInsertLine()
     endwhile
 endfunction
 
+function! FunProtoTrim(str)
+    let ret_str = a:str
+    "trim
+    let ret_str=substitute(ret_str, "^[\t ]*", "", "g")
+    let ret_str=substitute(ret_str, "[\t ]*$", "", "g")
+
+    return ret_str
+endfunction
 
 function! FunProtoFormat(prototypes_name)
     let l:prototypes_name = a:prototypes_name
-    "let l:prototypes_name=FunProtoRemoveCPPComment(l:prototypes_name)
+    let l:prototypes_name=FunProtoRemoveCPPComment(l:prototypes_name)
     "remove /*.. */
     let l:prototypes_name=FunProtoRemoveCComment(l:prototypes_name)
     "join the multi line to single line 
     let l:prototypes_name=substitute(l:prototypes_name, "\n", " ", "g")
     "let multi blank to single blank
     let l:prototypes_name=substitute(l:prototypes_name, "[\t ][\t ]*", " ", "g")
-    
+
     "remove the string after '{'
     let l:prototypes_name=substitute(l:prototypes_name,'{.*',"","g")
-    "trim
-    let l:prototypes_name=substitute(l:prototypes_name, "^[\t ]*", "", "g")
-    let l:prototypes_name=substitute(l:prototypes_name, "[\t ]*$", "", "g")
 
+    let l:prototypes_name =substitute(l:prototypes_name, "^[\t ]*", "", "g")
+    let l:prototypes_name=substitute(l:prototypes_name, "[\t ]*$", "", "g") 
+    "=FunProtoTrim(l:prototypes_name)
     let l:prototypes_name=l:prototypes_name.";"
 
     return l:prototypes_name
