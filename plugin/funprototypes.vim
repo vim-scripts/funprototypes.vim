@@ -1,7 +1,7 @@
 " File: funprototypes.vim
 " Author: wuhong400@gmail.com
 " Last Change:20 Feb 2011
-" Version:1.1 
+" Version:1.2 
 " Introdution:
 "   This script is only for C language. You just press the key which you mapped
 "   can automatic insert/replace the all funtions' prototypes before the first funtion.
@@ -74,6 +74,9 @@
 "     GTalk: wuhong400@gmail.com
 "       MSN: wuhong40@tom.com
 " Log:
+" 1.2 fix bug:
+"     when first function define at line 1, the script go into an infinite
+"     loop.
 "
 " 1.1 fix bug:
 "     1. The macro definitiona is in comment will generate bug.
@@ -218,7 +221,7 @@ function! FunProtoGetList()
 
                 "let s:dbg_str= s:dbg_str.",".fun_body_start_pos[0]
 
-                while 1
+                while fun_head_start_line > 0
                     let line_content = getline(fun_head_start_line)
                     let long_line_cnt = 1
                     while fun_head_start_line -1 > 0 
@@ -236,9 +239,8 @@ function! FunProtoGetList()
                         endif
                     endwhile
 
-                    "if 0 == match(line_content,  "[\t ]*#.*") || fun_head_start_line < pre_fun_end_pos[0]
-                    "    let fun_head_start_line = fun_head_start_line + long_line_cnt
-                    "    break
+                    "the line contain the token which means the function is end
+                    " ; } #
                     if line_content =~ ".*[;}#].*"
                         "code: fun_1();}/* ; */ int /* } */ fun_2(){ int i;
                         "may be some funtion info after the ';'&'}'
@@ -298,13 +300,9 @@ function! FunProtoGetList()
                         let fun_head_start_line = fun_head_start_line - long_line_cnt
                     endif
                 endwhile
-                "let s:dbg_str = s:dbg_str."".line_content
-                "return
 
                 "Format the fun_head, is it a typedef, struct or function?
                 let fun_head = FunProtoFormat(fun_head)
-                "if fun_head !~ "struct.*" && fun_head !~ "typedef.*" && fun_head[strlen(fun_head) - 2] != "="
-                "if  fun_head !~ "typedef.*" && fun_head[strlen(fun_head) - 2] != "="
                 if fun_head =~ ".*(.*)"
                     if FunProtoIsStaticFun(fun_head) == 1
                         let s:static_fun_cnt = s:static_fun_cnt + 1
@@ -372,6 +370,19 @@ function! FunProtoSkipFuntion()
     endfor
 
     let s:static_fun_list=temp_list
+endfunction
+
+function! FunProtoRemovePrototypes()
+    let curr_line = 1
+    while curr_line <= s:first_fun_line
+        let proto_start_line = curr_line 
+        let proto_end_line = curr_line 
+        let is_proto = 1
+        let curr_line_content = getline(curr_line)
+        "typedef #define array{} struct{} comment // /* */
+
+        let curr_line = proto_end_line
+    endwhile
 endfunction
 
 function! FunProtoRemoveOldprototypes(prototypes_str)
